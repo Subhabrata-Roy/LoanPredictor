@@ -20,7 +20,7 @@ warnings.filterwarnings('ignore')
 #---------------------------------------------preprocessing----------------------------------------------------------
 
 
-df = pd.read_csv(r'C:\Users\TECHIE\Desktop\Project\loan prediction\archive (1)\train_u6lujuX_CVtuZ9i.csv')
+df = pd.read_csv(r'C:\Users\TECHIE\Desktop\Project\loan prediction\LoanPredictor\archive (1)\train_u6lujuX_CVtuZ9i.csv')
 
 df.shape            #print the shape of dataframe
 
@@ -257,3 +257,261 @@ print('X_train shape', X_train.shape)
 print('y_train shape', y_train.shape)
 print('X_test shape', X_test.shape)
 print('y_test shape', y_test.shape)
+
+
+#------------------------------------------Model Training------------------------------------------------------------------
+
+
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
+
+models = {
+    'SVC': SVC(random_state=42),
+    'DecisionTreeClassifier': DecisionTreeClassifier(max_depth=1, random_state=42)
+}
+###########################################################################################################################
+# loss                                                                                                                    #
+                                                                                                                          #
+from sklearn.metrics import precision_score, recall_score, f1_score, log_loss, accuracy_score                             #
+
+def loss(y_true, y_pred, retu=False):                                                                                     #
+    pre = precision_score(y_true, y_pred)
+    rec = recall_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred)
+    loss = log_loss(y_true, y_pred)
+    acc = accuracy_score(y_true, y_pred)
+    
+    if retu:
+        return pre, rec, f1, loss, acc
+    else:
+        print('  pre: %.3f\n  rec: %.3f\n  f1: %.3f\n  loss: %.3f\n  acc: %.3f' % (pre, rec, f1, loss, acc))
+        
+###########################################################################################################################
+
+def train_eval_train(models, X, y):
+    for name, model in models.items():
+        print(name,':')
+        model.fit(X, y)
+        loss(y, model.predict(X))
+        print('-'*30)
+        
+train_eval_train(models, X_train, y_train)
+
+
+#--------------------------------------------------Coss Validation-----------------------------------------------------------------
+
+
+# train_eval_cross
+# in the next cell i will be explaining this function
+
+from sklearn.model_selection import StratifiedKFold
+skf = StratifiedKFold(n_splits=10, random_state=42, shuffle=True)
+
+def train_eval_cross(models, X, y, folds):
+    # we will change X & y to dataframe because we will use iloc (iloc don't work on numpy array)
+    X = pd.DataFrame(X) 
+    y = pd.DataFrame(y)
+    idx = [' pre', ' rec', ' f1', ' loss', ' acc']
+    for name, model in models.items():
+        ls = []
+        print(name,':')
+
+        for train, test in folds.split(X, y):
+            model.fit(X.iloc[train], y.iloc[train]) 
+            y_pred = model.predict(X.iloc[test]) 
+            ls.append(loss(y.iloc[test], y_pred, retu=True))
+        print(pd.DataFrame(np.array(ls).mean(axis=0), index=idx)[0])  #[0] because we don't want to show the name of the column
+        print('-'*30)
+        
+train_eval_cross(models, X_train, y_train, skf)
+
+# ohhh, as i said SVC is just memorizing the data, and you can see that here DecisionTreeClassifier is better than LogisticRegression 
+
+
+#----------------------------------------------Feature Engineering-----------------------------------------------------------------------------
+
+data_corr = pd.concat([X_train, y_train], axis=1)
+corr = data_corr.corr()
+plt.figure(figsize=(10,7))
+sns.heatmap(corr, annot=True);
+
+
+
+#--------------------------------------------Creating new features(Taken for nerds which are the field experts)---------------------------------
+
+# I will try to make some operations on some features, here I just tried diffrent operations on diffrent features,
+# having experience in the field, and having knowledge about the data will also help
+
+X_train['new_col'] = X_train['CoapplicantIncome'] / X_train['ApplicantIncome']  
+X_train['new_col_2'] = X_train['LoanAmount'] * X_train['Loan_Amount_Term'] 
+#Test those new features
+data_corr = pd.concat([X_train, y_train], axis=1)
+corr = data_corr.corr()
+plt.figure(figsize=(10,7))
+sns.heatmap(corr, annot=True);
+
+# new_col 0.03 , new_col_2, 0.047
+# not that much , but that will help us reduce the number of features
+
+
+#------------------------------------------Dropping some columns as told by experts--------------------------------------------------------------
+
+X_train.drop(['CoapplicantIncome', 'ApplicantIncome', 'Loan_Amount_Term', 'LoanAmount'], axis=1, inplace=True)
+
+train_eval_cross(models, X_train, y_train, skf)
+# ok, SVC is improving
+
+#------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+# first lets take a look at the value counts of every label
+
+for i in range(X_train.shape[1]):
+    print(X_train.iloc[:,i].value_counts(), end='\n------------------------------------------------\n')
+
+
+#----------------------------------------we will work on the features that have varied values----------------------------------------------------
+
+
+# new_col_2
+
+# we can see we got right_skewed
+# we can solve this problem with very simple statistical teqniq , by taking the logarithm of all the values
+# because when data is normally distributed that will help improving our model
+
+from scipy.stats import norm
+
+fig, ax = plt.subplots(1,2,figsize=(20,5))
+
+sns.distplot(X_train['new_col_2'], ax=ax[0], fit=norm)
+ax[0].set_title('new_col_2 before log')
+
+X_train['new_col_2'] = np.log(X_train['new_col_2'])  # logarithm of all the values
+
+sns.distplot(X_train['new_col_2'], ax=ax[1], fit=norm)
+ax[1].set_title('new_col_2 after log')    
+
+# now we will evaluate our models, and i will do that continuously ,
+#so i don't need to mention that every time
+
+train_eval_cross(models, X_train, y_train, skf)
+
+# wooow our models improved really good by just doing the previous step
+
+
+# new_col
+
+# most of our data is 0 , so we will try to change other values to 1
+
+print('before:')
+print(X_train['new_col'].value_counts())
+
+X_train['new_col'] = [x if x==0 else 1 for x in X_train['new_col']]
+print('-'*50)
+print('\nafter:')
+print(X_train['new_col'].value_counts())
+
+train_eval_cross(models, X_train, y_train, skf)
+# ok we are improving our models as we go 
+
+for i in range(X_train.shape[1]):
+    print(X_train.iloc[:,i].value_counts(), end='\n------------------------------------------------\n')
+    
+# looks better
+    
+    
+    
+#------------------------------------------------Outliers-----------------------------------------------------------------------------
+
+
+#There is different techniques to handle outliers, here we are going to use IQR
+
+# we will use boxplot to detect outliers
+
+sns.boxplot(X_train['new_col_2']);
+plt.title('new_col_2 outliers', fontsize=15);
+plt.xlabel('')
+
+threshold = 1.5  # this number is hyper parameter , as much as you reduce it, as much as you remove more points
+                 # you can just try different values the deafult value is (1.5) it works good for most cases
+                 # but be careful, you don't want to try a small number because you may loss some important information from the data .
+                 
+#The method of IQR
+
+new_col_2_out = X_train['new_col_2']
+q25, q75 = np.percentile(new_col_2_out, 25), np.percentile(new_col_2_out, 75) # Q25, Q75
+print('Quartile 25: {} , Quartile 75: {}'.format(q25, q75))
+
+iqr = q75 - q25
+print('iqr: {}'.format(iqr))
+
+cut = iqr * threshold
+lower, upper = q25 - cut, q75 + cut
+print('Cut Off: {}'.format(cut))
+print('Lower: {}'.format(lower))
+print('Upper: {}'.format(upper))
+
+outliers = [x for x in new_col_2_out if x < lower or x > upper]
+print('Nubers of Outliers: {}'.format(len(outliers)))
+print('outliers:{}'.format(outliers))
+
+data_outliers = pd.concat([X_train, y_train], axis=1)
+print('\nlen X_train before dropping the outliers', len(data_outliers))
+data_outliers = data_outliers.drop(data_outliers[(data_outliers['new_col_2'] > upper) | (data_outliers['new_col_2'] < lower)].index)
+
+print('len X_train before dropping the outliers', len(data_outliers))
+
+#Remove calculation of loan status from train to the result DataFrame which is y_train
+X_train = data_outliers.drop('Loan_Status', axis=1)
+y_train = data_outliers['Loan_Status']
+
+#Visualizing again
+
+sns.boxplot(X_train['new_col_2']);
+plt.title('new_col_2 without outliers', fontsize=15);
+plt.xlabel('')
+# good :)
+
+
+#-------------------------------------------------features selection-------------------------------------------------------------------------
+
+# Self_Employed got really bad corr (-0.00061) , let's try remove it and see what will happen
+
+data_corr = pd.concat([X_train, y_train], axis=1)
+corr = data_corr.corr()
+plt.figure(figsize=(10,7))
+sns.heatmap(corr, annot=True)
+
+#X_train.drop(['Self_Employed'], axis=1, inplace=True)
+
+train_eval_cross(models, X_train, y_train, skf)
+
+data_corr = pd.concat([X_train, y_train], axis=1)
+corr = data_corr.corr()
+plt.figure(figsize=(10,7))
+sns.heatmap(corr, annot=True)
+
+#----------------------------------------------evaluate the models on Test_data(FINALLY)----------------------------------------------------
+
+X_test_new = X_test.copy()
+
+#Processing like we have done to Train Data
+x = []
+
+X_test_new['new_col'] = X_test_new['CoapplicantIncome'] / X_test_new['ApplicantIncome']  
+X_test_new['new_col_2'] = X_test_new['LoanAmount'] * X_test_new['Loan_Amount_Term']
+X_test_new.drop(['CoapplicantIncome', 'ApplicantIncome', 'Loan_Amount_Term', 'LoanAmount'], axis=1, inplace=True)
+
+X_test_new['new_col_2'] = np.log(X_test_new['new_col_2'])
+
+X_test_new['new_col'] = [x if x==0 else 1 for x in X_test_new['new_col']]
+
+
+#-------------------------------------------Trying with the model------------------------------------------------------------------------------
+
+
+for name,model in models.items():
+    print(name, end=':\n')
+    loss(y_test, model.predict(X_test_new))
+    print('-'*40)
+
